@@ -1,0 +1,295 @@
+<?php
+/**
+ * @file
+ * Install, update and uninstall functions.
+ */
+
+/**
+ * Implements hook_install().
+ *
+ * Perform actions to set up the site for this profile.
+ *
+ * @see system_install()
+ */
+
+function everright_install() {
+  // Add text formats.
+  $full_html_format = array(
+    'format' => 'full_html',
+    'name' => 'Full HTML',
+    'weight' => 0,
+    'filters' => array(
+      // URL filter.
+      'filter_url' => array(
+        'weight' => 0,
+        'status' => 1,
+      ),
+      // Line break filter.
+      'filter_autop' => array(
+        'weight' => 1,
+        'status' => 1,
+      ),
+      // HTML corrector filter.
+      'filter_htmlcorrector' => array(
+        'weight' => 10,
+        'status' => 1,
+      ),
+    ),
+  );
+  $full_html_format = (object) $full_html_format;
+  filter_format_save($full_html_format);
+
+  $filtered_html_format = array(
+    'format' => 'filtered_html',
+    'name' => 'Filtered HTML',
+    'weight' => 1,
+    'filters' => array(
+      // URL filter.
+      'filter_url' => array(
+        'weight' => 0,
+        'status' => 1,
+      ),
+      // HTML filter.
+      'filter_html' => array(
+        'weight' => 1,
+        'status' => 1,
+      ),
+      // Line break filter.
+      'filter_autop' => array(
+        'weight' => 2,
+        'status' => 1,
+      ),
+      // HTML corrector filter.
+      'filter_htmlcorrector' => array(
+        'weight' => 10,
+        'status' => 1,
+      ),
+    ),
+  );
+  $filtered_html_format = (object) $filtered_html_format;
+  filter_format_save($filtered_html_format);
+
+  // Insert default pre-defined node types into the database. For a complete
+  // list of available node type attributes, refer to the node type API
+  // documentation at: http://api.drupal.org/api/HEAD/function/hook_node_info.
+  $types = array(
+    array(
+      'type' => 'page',
+      'name' => st('Basic page'),
+      'base' => 'node_content',
+      'description' => st("Use <em>basic pages</em> for your static content, such as an 'About us' page."),
+      'custom' => 1,
+      'modified' => 1,
+      'locked' => 0,
+    ),
+  );
+
+  foreach ($types as $type) {
+    $type = node_type_set_defaults($type);
+    node_type_save($type);
+    node_add_body_field($type);
+  }
+
+  // Insert default pre-defined RDF mapping into the database.
+  $rdf_mappings = array(
+    array(
+      'type' => 'node',
+      'bundle' => 'page',
+      'mapping' => array(
+        'rdftype' => array('foaf:Document'),
+      ),
+    ),
+  );
+  foreach ($rdf_mappings as $rdf_mapping) {
+    rdf_mapping_save($rdf_mapping);
+  }
+
+  // Enable default permissions for system roles.
+  $filtered_html_permission = filter_permission_name($filtered_html_format);
+  user_role_grant_permissions(DRUPAL_ANONYMOUS_RID, array('access content', 'access comments'));
+  user_role_grant_permissions(DRUPAL_AUTHENTICATED_RID, array('access content', 'access comments', 'post comments', 'skip comment approval', $filtered_html_permission));
+
+  // Create a default role for site administrators, with all available permissions assigned.
+  $admin_role = new stdClass();
+  $admin_role->name = 'administrator';
+  $admin_role->weight = 2;
+  user_role_save($admin_role);
+  user_role_grant_permissions($admin_role->rid, array_keys(module_invoke_all('permission')));
+
+  // Assign user 1 the "administrator" role.
+  db_insert('users_roles')
+    ->fields(array('uid' => 1, 'rid' => $admin_role->rid))
+    ->execute();
+
+  // Get admin user's name
+  $admin_name = db_query("SELECT name FROM {users} WHERE uid = 1")->fetchField();
+
+  // Allow file uploads with CKeditor for Full HTML input filter
+  $result = db_select('ckeditor_settings', 's')
+    ->fields('s', array('settings'))
+    ->condition('name', 'Full')
+    ->execute()
+    ->fetchAssoc();
+  $result['settings'] = unserialize($result['settings']);
+  $result['settings']['filebrowser'] = 'imce';
+  db_update('ckeditor_settings')->fields(
+    array('settings' => serialize($result['settings']))
+  )
+  ->condition('name', 'Full')
+  ->execute();
+
+  // Enable the admin theme.
+  db_update('system')
+    ->fields(array('status' => 1))
+    ->condition('type', 'theme')
+    ->condition('name', 'seven')
+    ->execute();
+
+  // No user picture support and set the default to a square thumbnail option.
+  // variable_set('user_pictures', '0');
+  // variable_set('user_picture_dimensions', '1024x1024');
+  // variable_set('user_picture_file_size', '800');
+  // variable_set('user_picture_style', 'thumbnail');
+  // Default "Basic page" to not be promoted and have comments disabled.
+  variable_set('node_options_page', array('status'));
+  variable_set('comment_page', COMMENT_NODE_HIDDEN);
+  // Don't display date and author information for "Basic page" nodes by default.
+  variable_set('node_submitted_page', FALSE);
+  // Set this as the administrator role.
+  variable_set('user_admin_role', $admin_role->rid);
+  // Cache GA code by default
+  // variable_set('googleanalytics_cache', 1);
+  // Disable user configurable timezones
+  variable_set('configurable_timezones', 0);
+  // Move admin toolbar to bottom right
+  variable_set('admin_toolbar', array('layout' => 'vertical', 'position' => 'se'));
+  // Enable transliteration on paths
+  variable_set('pathauto_transliterate', 1);
+  // Set pathauto defaults to node title
+  variable_set('pathauto_node_pattern', '[node:title]');
+  // Set pathauto defaults for user patterns
+  variable_set('pathauto_user_pattern', 'user/[user:name]');
+  // Set cron
+  variable_set('cron_safe_threshold', '43200');
+  // Set search engines to submit to
+  variable_set('xmlsitemap_engines_engines', array('bing', 'google'));
+  // Set XML sitemap minimum
+  variable_set('xmlsitemap_engines_minimum_lifetime', '604800');
+  // Include pages and articles in sitemap
+  variable_set('xmlsitemap_settings_node_page', array('status' => 1, 'priority' => 0.5));
+  // Disable user register.
+  variable_set('user_register', USER_REGISTER_ADMINISTRATORS_ONLY);
+  // Set pages: home and
+  variable_set('site_frontpage', 'node/1');
+  // Set admin theme
+  variable_set('admin_theme', 'seven');
+  variable_set('node_admin_theme', '1');
+  // Add new date options to be set as vars below
+  $values = array(
+    array(
+      'format' => 'M j, Y',
+      'type'  => 'short',
+      'locked' => '0'
+    ),
+    array(
+      'format' => 'F j, Y',
+      'type' => 'medium',
+      'locked' => '0'
+    ),
+    array(
+      'format' => 'D, F j, Y',
+      'type' => 'long',
+      'locked' => '0'
+    ),
+  );
+  $query = db_insert('date_formats')->fields(array('format', 'type', 'locked'));
+
+  foreach ($values as $record) {
+    $query->values($record);
+  }
+  $query->execute();
+
+  variable_set('date_first_day', '1');
+  variable_set('date_format_long', 'D, F j, Y');
+  variable_set('date_format_medium', 'F j, Y');
+  variable_set('date_format_short', 'M j, Y');
+
+  $default_nodes = array();
+  // Create default nodes
+  $default_nodes[] = array( 
+    'title' => st('Home'),
+    'body' => st('<p>DEFAULT TEXT:</p><p>Change this text after install.</p>'),
+    'path' => 'home',
+    'link_title' => st('Home'),
+    'link_weight' => 0,
+  );
+  $default_nodes[] = array( 
+    'title' => st('About'),
+    'body' => st('<p>DEFAULT TEXT:</p><p>Our company delivers superior services by giving our customers great results in a short time and at an affordable price.</p>'),
+    'path' => 'about',
+    'link_title' => st('About'),
+    'link_weight' => 1,
+  );
+  $default_nodes[] = array( 
+    'title' => st('Contact'),
+    'body' => st('<p>DEFAULT TEXT:</p><p>A professional contact page, please change with yourself.</p>'),
+    'path' => 'contact',
+    'link_title' => st('Contact'),
+    'link_weight' => 2,
+  );
+  $default_nodes[] = array( 
+    'title' => st('FAQ'),
+    'body' => st('<p>DEFAULT TEXT:</p><p>A professional faq page, please change with yourself.</p>'),
+    'path' => 'faq',
+    'link_title' => st('FAQ'),
+    'link_weight' => 3,
+  );
+  $default_nodes[] = array( 
+    'title' => st('Privacy & Policy'),
+    'body' => st('<p>DEFAULT TEXT:</p><p>A professional privacy & policy page, please change with yourself.</p>'),
+    'path' => 'privacy',
+  );
+  
+  foreach ($default_nodes as $key => $value) {
+    $node = new stdClass();
+    $node->type = 'page';
+    node_object_prepare($node);
+    $node->uid = 1;
+    $node->name = $admin_name;
+    $node->title = $value['title'];
+    $node->language = 'und';
+    $node->body['und']['0']['value'] = $value['body'];
+    $node->body['und']['0']['format'] = 'full_html';
+    if (isset($value['link_title']) && !empty($value['link_title'])) {
+      $node->menu = array(
+        'enabled' => 1,
+        'mlid' => 0,
+        'module' => 'menu',
+        'hidden' => 0,
+        'has_children' => 0,
+        'options' => array(),
+        'expanded' => 0,
+        'parent_depth_limit' => 8,
+        'link_title' => $value['link_title'],
+        'link_path' => $value['path'],
+        'description' => '',
+        'parent' => 'main-menu:0',
+        'weight' => isset($value['link_weight']) ? $value['link_weight'] : 0,
+        'plid' => 0,
+        'menu_name' => 'main-menu'
+      );
+    }
+
+    $node->path['alias'] = $value['path'];
+    $node->comment = 0;
+    $node->status = 1;
+    $node->revision = 0;
+    $node->log = 'Programmatically created: ' . date('D, F j, Y');
+    $node->changed = REQUEST_TIME;
+    $node->created = REQUEST_TIME;
+
+    //node_submit($node);
+    node_save($node);
+  }
+}
+
